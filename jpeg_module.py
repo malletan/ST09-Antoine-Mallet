@@ -88,39 +88,155 @@ def getQmtx(quality, channel='Y'):
     return quantMatrix
 
 
+xlim = range(8)
+ylim = xlim
+
+def dct2vec(DCT, rmCstb = True):
+    """Group together the coefficients of the same 8x8 base-image of an 8x8 Discrete Cosine Transform.
+    
+    -----------
+    Parameters:
+    
+    DCT -- 2-D numpy.ndarray. 
+
+    rmCstb (Optional) -- If set to True, it will remove the constant blocks in the image from its vectorized form.
+    -----------
+    """
+
+    nbdct = DCT.shape
+    dctVec = np.zeros( [ 64 , int(nbdct[0]*nbdct[1]/64) ] )
+    for x in xlim:
+        for y in ylim:
+            if x != 0 or y != 0:
+                dctVec[x*8+y,:] = DCT[x::8,y::8].flatten()
+
+    if rmCstb:
+        blkMin = np.min(dctVec[1::],0) # [1::] because if the block is constant, its dct will be constant for the AC coefficients
+        blkMax = np.max(dctVec[1::],0) # same 
+        idxCsteBlk = (blkMin != blkMax)
+        dctVec = dctVec[:,idxCsteBlk]
+    
+    return dctVec
+
+
+def getAC(data, x, y):
+    """Return a list of the AC coefficients of same mod (x,y).
+
+    -----------
+    Parameters:
+    
+    data -- A 2-D array that contains the transformed image. 
+
+    x, y -- (x,y) indices of the DCT subband we want to extract.
+    -----------
+    """
+    AC = np.asarray(data[x::8,y::8].flatten())
+
+    return AC
+
+
+def  get_hist(data, norm=False):
+    """Create a dictionary which keys are the histogram's bins and values are the bins' heights.
+    
+    -----------
+    Parameters:
+    
+    data -- Iterable-like variable whose values are to be used for constructing the histogram.
+
+    norm (Optional) -- If set to True, the sum of the heights is equal to 1.
+    -----------
+    """
+
+    tmp = {}
+    minval = int(min(data))
+    maxval = int(max(data))+1
+    itt = 0 
+    ott = 0 
+    for b in range(minval, maxval):
+        tmp[b] = 0
+    for d in data:
+        ott += 1 
+        if d > minval and d < maxval:
+            itt += 1
+            tmp[d] += 1
+    
+    if norm is True:
+        for v in tmp:
+            tmp[v] /= ott
+    
+    return tmp
+
+
 def repmat(Q, rep): return np.kron(np.ones(rep), Q)
 
+
 def quantise(C, Q):
+    """Quantize a given matrix C by a quantization matrix Q. 
+    We use the kronecker product to cast the matrix Q into the shape of the C matrix.
+    -----------
+    Parameters:
+
+    C -- In our case, C is the unquantized DCT coefficients matrix.
+
+    Q -- In our case, Q is the quantization matrix 
+    -----------
+    """
+
     [k,l] = C.shape
     [m,n] = Q.shape
     rep = (int(k/m), int(l/n))
-    #rep = (k/m, l/n)
+
     return   C / repmat(Q, rep) 
 
 
 def dequantise(C, Q):
+    """Dequantize a given matrix C by a quantization matrix Q. 
+    We use the kronecker product to cast the matrix Q into the shape of the C matrix.
+    -----------
+    Parameters:
+
+    C -- In our case, C is the unquantized DCT coefficients matrix.
+
+    Q -- In our case, Q is the quantization matrix 
+    -----------
+    """
     [k,l] = C.shape
     [m,n] = Q.shape
     rep = (int(k/m), int(l/n))
-    #rep = (k/m, l/n)
+
     return  C * repmat(Q, rep)
 
 
 def getFreq(channel, quality_factor, ctype='Y'):
+    """Return the frequency representation of a spatial channel, using a DCT. The result is then 
+    quantized by a quantized matrix given by the quality factor.
+    
+    -----------
+    Parameters:
+
+    channel -- An image in the form of a 2-D array in its spatial representation. Given the `ctype`, channel is treated as 
+    a grayscale image, or as a crominance level image.
+
+    quality_factor -- Indicate how compressed the image is wanted. 
+
+    ctype (Optional) -- Indicate what kind of image is given in `channel`. Default si 'Y' for luminance.
+    ----------- 
+    """
     Qmtx = getQmtx(quality_factor, ctype)
     return np.around( quantise( dct.bdct(channel), Qmtx ) )
 
+
 def getSpatial(channel, quality_factor, ctype='Y'):
     Qmtx = getQmtx(quality_factor, ctype)
-    return dequantise( dct.ibdct(channel), Qmtx )
+    return  dct.ibdct(dequantise(channel, Qmtx))
 
 
 def compress(img, quality_factor):
-    """Compresses images that are either in GRAYSCALE or YCbCr color modes.
+    """Compress images that are either in GRAYSCALE or YCbCr color modes.
        In YCbCr mode, returns an array of each transformed channel separated. 
        Note: The processing of multi-channel is not robust. """
     if len(img.shape) < 3:
-        return getFreq(img - 128, quality_factor)
+        return getFreq(img, quality_factor)
     elif img.shape[2] == 3: 
         c0 = img[:,:,0] #- 128
         c1 = img[:,:,1] #- 128
@@ -134,9 +250,10 @@ def compress(img, quality_factor):
     else:
         print("Invalid dimensions for the image: 1 or 3 color channel(s) expected.")
 
+
 def decompress(freqs, quality_factor):
     if len(freqs.shape) < 3:
-        return getSpatial(freqs, quality_factor) + 128
+        return getSpatial(freqs, quality_factor)
     elif freqs.shape[0] == 3: 
         img = np.ndarray( (freqs.shape[1], freqs.shape[2], freqs.shape[0]) ) # We change the dimensions back to the original ones
         for i in range(freqs.shape[0]):
@@ -144,3 +261,6 @@ def decompress(freqs, quality_factor):
         return img
     else:
         print("Invalid dimensions for the image: 1 or 3 color channel(s) expected.")
+
+
+
